@@ -1,0 +1,5 @@
+{
+  "name": "StoryPal",
+  "description": "A personalized social story application for children featuring parent training, interactive stories, and text-to-speech support.",
+  "requestFramePermissions": []
+}
