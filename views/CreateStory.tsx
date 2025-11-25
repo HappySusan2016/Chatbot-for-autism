@@ -1,7 +1,9 @@
 
+
 import React, { useState } from 'react';
 import { GoogleGenAI, Type } from "@google/genai";
 import { ChildProfile, Slide, Story } from '../types';
+import { FALLBACK_IMAGES } from '../constants';
 
 interface CreateStoryProps {
   profile: ChildProfile;
@@ -96,20 +98,23 @@ const CreateStory: React.FC<CreateStoryProps> = ({ profile, onSave, onCancel }) 
       for (let i = 0; i < totalSlides; i++) {
         const slide = storyData.slides[i];
         
-        const avatarDesc = profile.avatar === 'bear' ? 'a cute friendly teddy bear character illustration' : 
-                           profile.avatar === 'robot' ? 'a friendly round cute robot character illustration' : 'a cute soft cat character illustration';
+        const avatarDesc = profile.avatar === 'bear' ? 'a cute friendly teddy bear' : 
+                           profile.avatar === 'robot' ? 'a cute friendly round robot' : 'a cute soft cat';
         
         const sceneDesc = slide.visualPrompt || slide.text;
         
         // Consistent STRICT prompt
         const imagePrompt = `
-          Create a flat digital vector art illustration for a children's book.
+          Generate a cute, flat vector art illustration for a children's book.
           
-          SUBJECT: ${avatarDesc} in a scene about ${sceneDesc}.
-          STYLE: Minimalist vector art, soft pastel colors, clean thick lines, simple shapes. 
-          AESTHETIC: Cute, kawaii, warm, safe, comfortable, cartoon style.
+          Character: ${avatarDesc}
+          Scene Context: ${sceneDesc}
           
-          NEGATIVE PROMPT: No photorealism, no 3D realistic rendering, no scary elements, no dark colors, no text, no complex details, no blurry photos, no distorted faces.
+          Art Style:
+          - Soft pastel colors
+          - Minimalist vector art with clean thick lines
+          - Kawaii, warm, friendly
+          - No text, no photorealism
         `;
 
         try {
@@ -126,15 +131,24 @@ const CreateStory: React.FC<CreateStoryProps> = ({ profile, onSave, onCancel }) 
             }
           }
           
+          if (!generatedImage) throw new Error("No image data returned");
+
           slidesWithImages.push({
             ...slide,
             imgUrl: '', 
             generatedImage: generatedImage
           });
 
-        } catch (e) {
-          console.error("Failed to generate image for slide", i, e);
-          slidesWithImages.push({ ...slide, imgUrl: 'https://placehold.co/800x600/e2e8f0/475569?text=Image+Error' });
+        } catch (e: any) {
+          // Silent fallback for Quota exceeded or other errors
+          const isQuota = e.message?.includes('429') || e.status === 429;
+          console.warn(`Slide ${i} image generation failed ${isQuota ? '(Quota Exceeded)' : ''}, using fallback.`);
+          
+          slidesWithImages.push({ 
+            ...slide, 
+            imgUrl: FALLBACK_IMAGES[i % FALLBACK_IMAGES.length],
+            generatedImage: undefined 
+          });
         }
 
         setProgress(40 + Math.floor(((i + 1) / totalSlides) * 50));
@@ -145,7 +159,7 @@ const CreateStory: React.FC<CreateStoryProps> = ({ profile, onSave, onCancel }) 
         title: storyData.title || topic,
         topic: topic,
         description: storyData.description || `A story about ${topic}`,
-        coverImage: slidesWithImages[0]?.generatedImage || 'https://placehold.co/600x400',
+        coverImage: slidesWithImages[0]?.generatedImage || slidesWithImages[0]?.imgUrl || FALLBACK_IMAGES[0],
         tags: { icon: 'auto_awesome', label: 'Custom Story', color: 'text-purple-600', bg: 'bg-purple-50' },
         slides: slidesWithImages,
         isCustom: true
@@ -159,7 +173,7 @@ const CreateStory: React.FC<CreateStoryProps> = ({ profile, onSave, onCancel }) 
       console.error(error);
       setIsGenerating(false);
       setStatusText('');
-      alert("Something went wrong creating the story. Please try again.");
+      alert("Something went wrong creating the story text. Please try again.");
     }
   };
 

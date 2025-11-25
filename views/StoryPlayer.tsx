@@ -1,24 +1,27 @@
 
-import React, { useState, useEffect } from 'react';
+
+import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { ChildProfile, Story } from '../types';
+import { FALLBACK_IMAGES } from '../constants';
 
 interface StoryPlayerProps {
   story: Story;
   profile: ChildProfile;
   onFinish: () => void;
   onExit: () => void;
+  imageCache: Record<number, string>;
+  onCacheImage: (index: number, url: string) => void;
 }
 
-// Fallback images (Cute/Soft/Cartoon-like) to use if AI generation fails
-const FALLBACK_IMAGES = [
-  "https://images.unsplash.com/photo-1558060370-d644479cb673?auto=format&fit=crop&w=800&q=80", // Cute animal
-  "https://images.unsplash.com/photo-1555596873-45521b446f2f?auto=format&fit=crop&w=800&q=80", // Knitted bear
-  "https://images.unsplash.com/photo-1596461404969-9ae70f2830c1?auto=format&fit=crop&w=800&q=80", // Toys
-  "https://images.unsplash.com/photo-1515488042361-25f4682f2c33?auto=format&fit=crop&w=800&q=80"  // Soft toy
-];
-
-const StoryPlayer: React.FC<StoryPlayerProps> = ({ story, profile, onFinish, onExit }) => {
+const StoryPlayer: React.FC<StoryPlayerProps> = ({ 
+  story, 
+  profile, 
+  onFinish, 
+  onExit,
+  imageCache,
+  onCacheImage
+}) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [showPauseModal, setShowPauseModal] = useState(false);
@@ -28,9 +31,16 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({ story, profile, onFinish, onE
   // Interactive Effects
   const [clickEffects, setClickEffects] = useState<{id: number, x: number, y: number, char: string}[]>([]);
   
-  // Image Generation State
-  const [generatedImages, setGeneratedImages] = useState<Record<number, string>>({});
+  // Image Generation State (Loading only, data is in imageCache)
   const [loadingStates, setLoadingStates] = useState<Record<number, boolean>>({});
+  
+  // Ref to track mounted state
+  const isMounted = useRef(true);
+
+  useEffect(() => {
+    isMounted.current = true;
+    return () => { isMounted.current = false; };
+  }, []);
 
   const slide = story.slides[currentIndex];
   
@@ -102,8 +112,8 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({ story, profile, onFinish, onE
 
   // Image Generation Logic
   useEffect(() => {
-    // 1. If we already have a generated image in state, use it.
-    if (generatedImages[currentIndex]) return;
+    // 1. If we already have a generated image in cache, use it.
+    if (imageCache[currentIndex]) return;
 
     // 2. If the story has a hardcoded static URL, use it (only if not empty string).
     if (slide.imgUrl && slide.imgUrl.trim().length > 0) return;
@@ -113,7 +123,9 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({ story, profile, onFinish, onE
 
     const useFallback = () => {
        const randomFallback = FALLBACK_IMAGES[currentIndex % FALLBACK_IMAGES.length];
-       setGeneratedImages(prev => ({ ...prev, [currentIndex]: randomFallback }));
+       if (isMounted.current) {
+         onCacheImage(currentIndex, randomFallback);
+       }
     };
 
     // 4. Fallback: Generate the image.
@@ -128,13 +140,15 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({ story, profile, onFinish, onE
       // Prevent double loading
       if (loadingStates[currentIndex]) return;
 
-      setLoadingStates(prev => ({ ...prev, [currentIndex]: true }));
+      if (isMounted.current) {
+        setLoadingStates(prev => ({ ...prev, [currentIndex]: true }));
+      }
 
       try {
         const ai = new GoogleGenAI({ apiKey: apiKey });
         
-        const avatarDesc = profile.avatar === 'bear' ? 'a cute friendly teddy bear character illustration' : 
-                           profile.avatar === 'robot' ? 'a cute friendly round robot character illustration' : 'a cute soft cat character illustration';
+        const avatarDesc = profile.avatar === 'bear' ? 'a cute friendly teddy bear' : 
+                           profile.avatar === 'robot' ? 'a cute friendly round robot' : 'a cute soft cat';
         
         const baseDescription = slide.visualPrompt || slide.text;
         const sceneDesc = baseDescription
@@ -142,15 +156,18 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({ story, profile, onFinish, onE
           .replace(/{interest}/g, profile.interest)
           .replace(/{strategy}/g, 'calming down');
 
-        // REFINED PROMPT FOR CARTOON/SOFT STYLE
+        // REFINED PROMPT FOR CARTOON/SOFT STYLE - SIMPLIFIED TO REDUCE ERRORS
         const prompt = `
-          Create a flat digital vector art illustration for a children's book.
+          Generate a cute, flat vector art illustration for a children's book.
           
-          SUBJECT: ${avatarDesc} in a scene about ${sceneDesc}.
-          STYLE: Minimalist vector art, soft pastel colors, clean thick lines, simple shapes. 
-          AESTHETIC: Cute, kawaii, warm, safe, comfortable, cartoon style.
+          Character: ${avatarDesc}
+          Scene Context: ${sceneDesc}
           
-          NEGATIVE PROMPT: No photorealism, no 3D realistic rendering, no scary elements, no dark colors, no text, no complex details, no blurry photos, no scary faces.
+          Art Style:
+          - Soft pastel colors
+          - Minimalist vector art with clean thick lines
+          - Kawaii, warm, friendly
+          - No text, no photorealism
         `;
 
         const response = await ai.models.generateContent({
@@ -164,24 +181,38 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({ story, profile, onFinish, onE
             const base64 = part.inlineData.data;
             const mimeType = part.inlineData.mimeType || 'image/png';
             const imageUrl = `data:${mimeType};base64,${base64}`;
-            setGeneratedImages(prev => ({ ...prev, [currentIndex]: imageUrl }));
+            
+            if (isMounted.current) {
+              onCacheImage(currentIndex, imageUrl);
+            }
             foundImage = true;
             break;
           }
         }
         
-        if (!foundImage) throw new Error("No image data found");
+        if (!foundImage) {
+           console.warn("Model did not return an image part. Falling back.");
+           useFallback();
+        }
 
-      } catch (error) {
-        console.error("Image generation failed:", error);
+      } catch (error: any) {
+        // Quietly handle Quota exceeded errors
+        const isQuota = error.message?.includes('429') || error.status === 429;
+        if (isQuota) {
+            console.warn("Image generation quota exceeded. Using fallback.");
+        } else {
+            console.error("Image generation failed:", error);
+        }
         useFallback();
       } finally {
-        setLoadingStates(prev => ({ ...prev, [currentIndex]: false }));
+        if (isMounted.current) {
+          setLoadingStates(prev => ({ ...prev, [currentIndex]: false }));
+        }
       }
     };
 
     generateImage();
-  }, [currentIndex, story.id, profile, slide, loadingStates, generatedImages]);
+  }, [currentIndex, story.id, profile, slide, loadingStates, imageCache, onCacheImage]);
 
   useEffect(() => {
     setFeedback(null);
@@ -250,7 +281,7 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({ story, profile, onFinish, onE
     'conclusion': 'Great Job!' 
   };
 
-  const activeImage = generatedImages[currentIndex] || slide.generatedImage || slide.imgUrl;
+  const activeImage = imageCache[currentIndex] || slide.generatedImage || slide.imgUrl;
   const isLoading = loadingStates[currentIndex] && !activeImage;
 
   return (

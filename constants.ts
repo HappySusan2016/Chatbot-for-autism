@@ -19,6 +19,14 @@ export const IMAGES = {
   training_highfive: "https://images.unsplash.com/photo-1618331835717-801e976710b2?auto=format&fit=crop&w=800&q=80",
 };
 
+// Fallback images (Cute/Soft/Cartoon-like) to use if AI generation fails (e.g. Quota Exceeded)
+export const FALLBACK_IMAGES = [
+  "https://images.unsplash.com/photo-1558060370-d644479cb673?auto=format&fit=crop&w=800&q=80", // Cute animal
+  "https://images.unsplash.com/photo-1555596873-45521b446f2f?auto=format&fit=crop&w=800&q=80", // Knitted bear
+  "https://images.unsplash.com/photo-1596461404969-9ae70f2830c1?auto=format&fit=crop&w=800&q=80", // Toys
+  "https://images.unsplash.com/photo-1515488042361-25f4682f2c33?auto=format&fit=crop&w=800&q=80"  // Soft toy
+];
+
 export const STORIES: Record<string, Story> = {
   'birthday': {
       id: 'birthday',

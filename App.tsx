@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { ViewState, ChildProfile, Story } from './types';
 import { STORIES } from './constants';
@@ -16,6 +17,9 @@ const App: React.FC = () => {
   const [currentStoryId, setCurrentStoryId] = useState<string | null>(null);
   const [stars, setStars] = useState(0);
   const [customStories, setCustomStories] = useState<Story[]>([]);
+  
+  // Cache for generated images: StoryID -> SlideIndex -> ImageURL
+  const [imageCache, setImageCache] = useState<Record<string, Record<number, string>>>({});
 
   const navigate = (newView: ViewState) => {
     setView(newView);
@@ -39,6 +43,16 @@ const App: React.FC = () => {
   const handleCreateSave = (story: Story) => {
     setCustomStories(prev => [story, ...prev]);
     navigate('dashboard');
+  };
+  
+  const handleCacheImage = (storyId: string, slideIndex: number, imageUrl: string) => {
+    setImageCache(prev => ({
+      ...prev,
+      [storyId]: {
+        ...(prev[storyId] || {}),
+        [slideIndex]: imageUrl
+      }
+    }));
   };
 
   // Helper to find story in either built-in or custom collection
@@ -99,6 +113,8 @@ const App: React.FC = () => {
             profile={profile}
             onFinish={handleStoryFinish}
             onExit={() => navigate('dashboard')}
+            imageCache={imageCache[activeStory.id] || {}}
+            onCacheImage={(index, url) => handleCacheImage(activeStory.id, index, url)}
           />
         )}
 
