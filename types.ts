@@ -1,6 +1,7 @@
+
 import React from 'react';
 
-export type ViewState = 'landing' | 'passport' | 'dashboard' | 'training' | 'story' | 'completion' | 'create-story';
+export type ViewState = 'landing' | 'login' | 'passport' | 'dashboard' | 'training' | 'story' | 'completion' | 'create-story';
 
 export interface ChildProfile {
   name: string;

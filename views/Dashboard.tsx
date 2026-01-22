@@ -8,9 +8,18 @@ interface DashboardProps {
   customStories: Story[];
   onNavigate: (view: ViewState) => void;
   onLoadStory: (storyId: string) => void;
+  onEditStory: (storyId: string) => void;
+  onDeleteStory: (storyId: string) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ profile, customStories, onNavigate, onLoadStory }) => {
+const Dashboard: React.FC<DashboardProps> = ({ 
+  profile, 
+  customStories, 
+  onNavigate, 
+  onLoadStory,
+  onEditStory,
+  onDeleteStory
+}) => {
   return (
     <section className="min-h-full p-6 slide-enter overflow-y-auto">
       <div className="max-w-6xl mx-auto">
@@ -54,7 +63,13 @@ const Dashboard: React.FC<DashboardProps> = ({ profile, customStories, onNavigat
             </h3>
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
               {customStories.map((story) => (
-                <StoryCard key={story.id} story={story} onClick={() => onLoadStory(story.id)} />
+                <StoryCard 
+                  key={story.id} 
+                  story={story} 
+                  onClick={() => onLoadStory(story.id)} 
+                  onEdit={() => onEditStory(story.id)}
+                  onDelete={() => onDeleteStory(story.id)}
+                />
               ))}
             </div>
           </div>
@@ -90,12 +105,17 @@ const Dashboard: React.FC<DashboardProps> = ({ profile, customStories, onNavigat
 };
 
 // Helper component to handle image errors gracefully
-const StoryCard: React.FC<{ story: Story; onClick: () => void }> = ({ story, onClick }) => {
+const StoryCard: React.FC<{ 
+  story: Story; 
+  onClick: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+}> = ({ story, onClick, onEdit, onDelete }) => {
   const [imgError, setImgError] = useState(false);
 
   return (
     <div 
-      className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition overflow-hidden group cursor-pointer border border-slate-100 flex flex-col h-full"
+      className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition overflow-hidden group cursor-pointer border border-slate-100 flex flex-col h-full relative"
       onClick={onClick}
     >
       <div className="h-40 overflow-hidden relative bg-slate-200 shrink-0">
@@ -116,6 +136,26 @@ const StoryCard: React.FC<{ story: Story; onClick: () => void }> = ({ story, onC
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-4">
           <h3 className="text-white font-bold text-xl font-fredoka drop-shadow-md">{story.title}</h3>
         </div>
+
+        {/* Action Buttons for Custom Stories */}
+        {story.isCustom && (
+          <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button 
+              className="p-2 bg-white/90 backdrop-blur rounded-full text-indigo-600 shadow-md hover:bg-indigo-50 transition"
+              onClick={(e) => { e.stopPropagation(); onEdit?.(); }}
+              title="Edit Story"
+            >
+              <span className="material-symbols-outlined text-sm">edit</span>
+            </button>
+            <button 
+              className="p-2 bg-white/90 backdrop-blur rounded-full text-red-500 shadow-md hover:bg-red-50 transition"
+              onClick={(e) => { e.stopPropagation(); onDelete?.(); }}
+              title="Delete Story"
+            >
+              <span className="material-symbols-outlined text-sm">delete</span>
+            </button>
+          </div>
+        )}
       </div>
       <div className="p-4 flex-1 flex flex-col justify-between">
         <p className="text-sm text-slate-600 mb-4 line-clamp-2">{story.description}</p>

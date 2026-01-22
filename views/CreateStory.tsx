@@ -1,6 +1,5 @@
 
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { GoogleGenAI, Type } from "@google/genai";
 import { ChildProfile, Slide, Story } from '../types';
 import { FALLBACK_IMAGES } from '../constants';
@@ -9,13 +8,18 @@ interface CreateStoryProps {
   profile: ChildProfile;
   onSave: (story: Story) => void;
   onCancel: () => void;
+  initialTopic?: string;
 }
 
-const CreateStory: React.FC<CreateStoryProps> = ({ profile, onSave, onCancel }) => {
-  const [topic, setTopic] = useState('');
+const CreateStory: React.FC<CreateStoryProps> = ({ profile, onSave, onCancel, initialTopic }) => {
+  const [topic, setTopic] = useState(initialTopic || '');
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [statusText, setStatusText] = useState('');
+
+  useEffect(() => {
+    if (initialTopic) setTopic(initialTopic);
+  }, [initialTopic]);
 
   const handleCreate = async () => {
     if (!topic.trim()) return;
@@ -27,7 +31,6 @@ const CreateStory: React.FC<CreateStoryProps> = ({ profile, onSave, onCancel }) 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-      // 1. Generate Story Structure
       const systemInstruction = `
         You are an expert in creating social stories for children with autism.
         Create a 4-slide social story about the topic provided.
@@ -36,8 +39,9 @@ const CreateStory: React.FC<CreateStoryProps> = ({ profile, onSave, onCancel }) 
         Use placeholders {name}, {interest}, {strategy} in the text.
       `;
 
+      // Use gemini-3-flash-preview for basic text tasks
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         contents: `Create a social story about: ${topic} for a child named ${profile.name} who likes ${profile.interest}.`,
         config: {
             systemInstruction: systemInstruction,
@@ -75,7 +79,8 @@ const CreateStory: React.FC<CreateStoryProps> = ({ profile, onSave, onCancel }) 
         }
       });
 
-      let jsonString = response.text || '{}';
+      // Accessing response.text as a property correctly
+      let jsonString = (response.text || '{}').trim();
       jsonString = jsonString.replace(/^```json\s*/, '').replace(/\s*```$/, '');
 
       let storyData;
@@ -91,33 +96,28 @@ const CreateStory: React.FC<CreateStoryProps> = ({ profile, onSave, onCancel }) 
       setProgress(40);
       setStatusText('Illustrating the story (this may take a moment)...');
 
-      // 2. Generate Images for each slide
       const slidesWithImages: Slide[] = [];
-      const totalSlides = storyData.slides?.length || 0;
+      const totalSlides = storyData?.slides?.length || 0;
 
       for (let i = 0; i < totalSlides; i++) {
         const slide = storyData.slides[i];
-        
+        if (!slide) continue;
+
         const avatarDesc = profile.avatar === 'bear' ? 'a cute friendly teddy bear' : 
                            profile.avatar === 'robot' ? 'a cute friendly round robot' : 'a cute soft cat';
         
-        const sceneDesc = slide.visualPrompt || slide.text;
+        const sceneDesc = (slide.visualPrompt || slide.text || "a quiet room");
         
-        // Consistent STRICT prompt
         const imagePrompt = `
           Generate a cute, flat vector art illustration for a children's book.
-          
           Character: ${avatarDesc}
-          Scene Context: ${sceneDesc}
-          
-          Art Style:
-          - Soft pastel colors
-          - Minimalist vector art with clean thick lines
-          - Kawaii, warm, friendly
-          - No text, no photorealism
+          Specific Activity: ${sceneDesc}
+          Art Style: Soft pastel colors, minimalist vector art, clean thick lines, kawaii.
+          Background: Simple and uncluttered. No text, no photorealism.
         `;
 
         try {
+          // Use gemini-2.5-flash-image for image generation tasks
           const imgResponse = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: { parts: [{ text: imagePrompt }] },
@@ -133,24 +133,14 @@ const CreateStory: React.FC<CreateStoryProps> = ({ profile, onSave, onCancel }) 
           
           if (!generatedImage) throw new Error("No image data returned");
 
-          slidesWithImages.push({
-            ...slide,
-            imgUrl: '', 
-            generatedImage: generatedImage
-          });
-
-        } catch (e: any) {
-          // Silent fallback for Quota exceeded or other errors
-          const isQuota = e.message?.includes('429') || e.status === 429;
-          console.warn(`Slide ${i} image generation failed ${isQuota ? '(Quota Exceeded)' : ''}, using fallback.`);
-          
+          slidesWithImages.push({ ...slide, imgUrl: '', generatedImage: generatedImage });
+        } catch (e) {
           slidesWithImages.push({ 
             ...slide, 
             imgUrl: FALLBACK_IMAGES[i % FALLBACK_IMAGES.length],
             generatedImage: undefined 
           });
         }
-
         setProgress(40 + Math.floor(((i + 1) / totalSlides) * 50));
       }
 
@@ -173,75 +163,47 @@ const CreateStory: React.FC<CreateStoryProps> = ({ profile, onSave, onCancel }) 
       console.error(error);
       setIsGenerating(false);
       setStatusText('');
-      alert("Something went wrong creating the story text. Please try again.");
+      alert("Something went wrong creating the story. Please try again.");
     }
   };
 
   return (
     <section className="min-h-full flex flex-col items-center justify-center p-6 slide-enter bg-indigo-50">
       <div className="max-w-xl w-full bg-white rounded-3xl shadow-xl p-8 relative overflow-hidden">
-        
         {isGenerating && (
           <div className="absolute inset-0 bg-white/95 backdrop-blur z-20 flex flex-col items-center justify-center p-8">
              <div className="w-24 h-24 mb-6 relative">
                <div className="absolute inset-0 border-4 border-slate-100 rounded-full"></div>
-               <div 
-                 className="absolute inset-0 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin"
-               ></div>
-               <div className="absolute inset-0 flex items-center justify-center text-indigo-600 font-bold text-xl">
-                 {Math.round(progress)}%
-               </div>
+               <div className="absolute inset-0 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin"></div>
+               <div className="absolute inset-0 flex items-center justify-center text-indigo-600 font-bold text-xl">{Math.round(progress)}%</div>
              </div>
              <h3 className="text-2xl font-bold text-slate-800 font-fredoka animate-pulse">{statusText}</h3>
-             <p className="text-slate-500 mt-2">Creating magic for {profile.name}...</p>
           </div>
         )}
-
         <div className="mb-8 text-center">
           <div className="w-16 h-16 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4">
-            <span className="material-symbols-outlined text-3xl">magic_button</span>
+            <span className="material-symbols-outlined text-3xl">{initialTopic ? 'edit_note' : 'magic_button'}</span>
           </div>
-          <h2 className="text-3xl font-bold text-slate-800 font-fredoka">Create a New Story</h2>
-          <p className="text-slate-600 mt-2">
-            Tell us what event is coming up, and we'll write and illustrate a story just for {profile.name}.
-          </p>
+          <h2 className="text-3xl font-bold text-slate-800 font-fredoka">{initialTopic ? 'Edit Your Story' : 'Create a New Story'}</h2>
         </div>
-
         <div className="space-y-6">
           <div>
             <label className="block text-sm font-bold text-slate-700 mb-2">What is the story about?</label>
             <input 
               className="w-full p-4 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-lg"
-              placeholder="e.g. Going to the barber, Trying new food, First day of school"
+              placeholder="e.g. Going to the dentist, First day of school"
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
               disabled={isGenerating}
               autoFocus
             />
           </div>
-
-          <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex gap-3">
-             <span className="material-symbols-outlined text-blue-500">info</span>
-             <p className="text-sm text-blue-800">
-               We will generate 4 slides with custom illustrations featuring a friendly {profile.avatar} character.
-             </p>
-          </div>
-
           <div className="flex gap-4 pt-2">
+            <button className="flex-1 py-4 rounded-xl font-bold text-slate-500 hover:bg-slate-100" onClick={onCancel} disabled={isGenerating}>Cancel</button>
             <button 
-              className="flex-1 py-4 rounded-xl font-bold text-slate-500 hover:bg-slate-100 transition"
-              onClick={onCancel}
-              disabled={isGenerating}
-            >
-              Cancel
-            </button>
-            <button 
-              className="flex-[2] bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl shadow-lg transition transform hover:scale-[1.02] disabled:opacity-70 disabled:scale-100"
-              onClick={handleCreate}
-              disabled={!topic.trim() || isGenerating}
-            >
-              Create Story
-            </button>
+              className="flex-[2] bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl shadow-lg transition transform hover:scale-[1.02] disabled:opacity-70"
+              onClick={handleCreate} disabled={!topic.trim() || isGenerating}
+            >{initialTopic ? 'Regenerate & Save' : 'Create Story'}</button>
           </div>
         </div>
       </div>

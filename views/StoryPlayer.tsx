@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { ChildProfile, Story } from '../types';
@@ -25,16 +24,21 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [showPauseModal, setShowPauseModal] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  
+  // Voice Settings State
+  const [voicePitch, setVoicePitch] = useState(1.1);
+  const [voiceRate, setVoiceRate] = useState(0.9);
+
   const [feedback, setFeedback] = useState<string | null>(null);
   const [selectedChoiceIndex, setSelectedChoiceIndex] = useState<number | null>(null);
   
   // Interactive Effects
   const [clickEffects, setClickEffects] = useState<{id: number, x: number, y: number, char: string}[]>([]);
   
-  // Image Generation State (Loading only, data is in imageCache)
+  // Image Generation State
   const [loadingStates, setLoadingStates] = useState<Record<number, boolean>>({});
   
-  // Ref to track mounted state
   const isMounted = useRef(true);
 
   useEffect(() => {
@@ -42,52 +46,45 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
     return () => { isMounted.current = false; };
   }, []);
 
-  const slide = story.slides[currentIndex];
+  const slide = story?.slides?.[currentIndex];
   
-  // Processed Text
-  const processedText = slide.text
-    .replace(/{name}/g, profile.name)
-    .replace(/{interest}/g, profile.interest)
-    .replace(/{strategy}/g, profile.strategy);
+  // Safe Processed Text - Prevents "Cannot read properties of undefined (reading 'replace')"
+  const processedText = (slide?.text || "")
+    .replace(/{name}/g, profile?.name || "friend")
+    .replace(/{interest}/g, profile?.interest || "things you like")
+    .replace(/{strategy}/g, profile?.strategy || "taking a breath");
     
-  const processedTip = slide.parentTip;
-  const processedAction = slide.parentAction.replace(/{strategy}/g, profile.strategy);
+  const processedTip = slide?.parentTip || "";
+  const processedAction = (slide?.parentAction || "")
+    .replace(/{strategy}/g, profile?.strategy || "taking a breath");
 
-  // Helper for TTS - Updated for Cuter/Softer Voice
-  const speak = (text: string) => {
+  // Helper for TTS
+  const speak = (text: string, isTest: boolean = false) => {
     if (typeof window === 'undefined' || !window.speechSynthesis) return;
     
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     
-    // Voice Selection Logic
     let selectedVoice = null;
-
-    if (profile.voiceURI !== 'default') {
-      selectedVoice = window.speechSynthesis.getVoices().find(v => v.voiceURI === profile.voiceURI);
-    } else {
-      // Auto-select a softer/friendly voice if default is chosen
-      const voices = window.speechSynthesis.getVoices();
-      selectedVoice = voices.find(v => v.name.includes('Google US English')) ||
-                      voices.find(v => v.name.includes('Samantha')) || 
-                      voices.find(v => v.name.includes('Zira')) ||
-                      voices.find(v => v.name.toLowerCase().includes('female')) ||
-                      null;
-    }
-
-    if (selectedVoice) {
-      utterance.voice = selectedVoice;
-    }
-
-    // Tuning for "Cute/Soft" Voice
-    // Pitch: Higher (>1.0) sounds younger/happier. 1.2-1.3 is a "sweet spot" for storytelling.
-    // Rate: Slightly slower (<1.0) is more engaging and easier for children to process.
-    utterance.pitch = 1.2; 
-    utterance.rate = 0.9; 
+    const voices = window.speechSynthesis.getVoices();
     
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
+    selectedVoice = 
+      voices.find(v => v.name.includes('Natural') && v.name.includes('English')) ||
+      voices.find(v => v.name === 'Google US English') ||
+      voices.find(v => v.name === 'Samantha') || 
+      voices.find(v => v.name === 'Tessa') ||
+      voices.find(v => v.lang.startsWith('en'));
+
+    if (selectedVoice) utterance.voice = selectedVoice;
+
+    utterance.pitch = voicePitch; 
+    utterance.rate = voiceRate; 
+    
+    if (!isTest) {
+        utterance.onstart = () => setIsSpeaking(true);
+        utterance.onend = () => setIsSpeaking(false);
+        utterance.onerror = () => setIsSpeaking(false);
+    }
     
     window.speechSynthesis.speak(utterance);
   };
@@ -103,7 +100,6 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
     else speak(feedback || processedText);
   };
 
-  // Ensure voices are loaded
   useEffect(() => {
     const loadVoices = () => window.speechSynthesis.getVoices();
     loadVoices();
@@ -112,62 +108,43 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
 
   // Image Generation Logic
   useEffect(() => {
-    // 1. If we already have a generated image in cache, use it.
+    if (!slide) return;
     if (imageCache[currentIndex]) return;
-
-    // 2. If the story has a hardcoded static URL, use it (only if not empty string).
     if (slide.imgUrl && slide.imgUrl.trim().length > 0) return;
-
-    // 3. If the story has a pre-generated image (custom stories passed from creation), use it.
     if (slide.generatedImage) return;
 
     const useFallback = () => {
        const randomFallback = FALLBACK_IMAGES[currentIndex % FALLBACK_IMAGES.length];
-       if (isMounted.current) {
-         onCacheImage(currentIndex, randomFallback);
-       }
+       if (isMounted.current) onCacheImage(currentIndex, randomFallback);
     };
 
-    // 4. Fallback: Generate the image.
     const apiKey = process.env.API_KEY;
     if (!apiKey) {
-        console.warn("API Key not available for image generation.");
         useFallback();
         return;
     }
 
     const generateImage = async () => {
-      // Prevent double loading
       if (loadingStates[currentIndex]) return;
-
-      if (isMounted.current) {
-        setLoadingStates(prev => ({ ...prev, [currentIndex]: true }));
-      }
+      if (isMounted.current) setLoadingStates(prev => ({ ...prev, [currentIndex]: true }));
 
       try {
         const ai = new GoogleGenAI({ apiKey: apiKey });
-        
         const avatarDesc = profile.avatar === 'bear' ? 'a cute friendly teddy bear' : 
                            profile.avatar === 'robot' ? 'a cute friendly round robot' : 'a cute soft cat';
         
-        const baseDescription = slide.visualPrompt || slide.text;
-        const sceneDesc = baseDescription
+        const baseDescription = slide.visualPrompt || slide.text || "a happy scene";
+        const sceneDesc = (baseDescription || "")
           .replace(/{name}/g, 'the main character')
-          .replace(/{interest}/g, profile.interest)
+          .replace(/{interest}/g, profile.interest || "toys")
           .replace(/{strategy}/g, 'calming down');
 
-        // REFINED PROMPT FOR CARTOON/SOFT STYLE - SIMPLIFIED TO REDUCE ERRORS
         const prompt = `
           Generate a cute, flat vector art illustration for a children's book.
-          
           Character: ${avatarDesc}
-          Scene Context: ${sceneDesc}
-          
-          Art Style:
-          - Soft pastel colors
-          - Minimalist vector art with clean thick lines
-          - Kawaii, warm, friendly
-          - No text, no photorealism
+          Specific Activity: ${sceneDesc}
+          Art Style: Soft pastel colors, minimalist vector art, clean thick lines, kawaii, warm, friendly.
+          Requirements: Simple uncluttered background, no text, no photorealism.
         `;
 
         const response = await ai.models.generateContent({
@@ -181,33 +158,16 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
             const base64 = part.inlineData.data;
             const mimeType = part.inlineData.mimeType || 'image/png';
             const imageUrl = `data:${mimeType};base64,${base64}`;
-            
-            if (isMounted.current) {
-              onCacheImage(currentIndex, imageUrl);
-            }
+            if (isMounted.current) onCacheImage(currentIndex, imageUrl);
             foundImage = true;
             break;
           }
         }
-        
-        if (!foundImage) {
-           console.warn("Model did not return an image part. Falling back.");
-           useFallback();
-        }
-
-      } catch (error: any) {
-        // Quietly handle Quota exceeded errors
-        const isQuota = error.message?.includes('429') || error.status === 429;
-        if (isQuota) {
-            console.warn("Image generation quota exceeded. Using fallback.");
-        } else {
-            console.error("Image generation failed:", error);
-        }
+        if (!foundImage) useFallback();
+      } catch (error) {
         useFallback();
       } finally {
-        if (isMounted.current) {
-          setLoadingStates(prev => ({ ...prev, [currentIndex]: false }));
-        }
+        if (isMounted.current) setLoadingStates(prev => ({ ...prev, [currentIndex]: false }));
       }
     };
 
@@ -220,10 +180,6 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
     stopSpeech();
     setClickEffects([]); 
   }, [currentIndex]);
-
-  useEffect(() => {
-    return () => stopSpeech();
-  }, []);
 
   const handleNext = () => {
     if (currentIndex < story.slides.length - 1) {
@@ -242,7 +198,6 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
     setFeedback(feedbackText);
     speak(feedbackText);
     
-    // Reward Effect
     const id = Date.now();
     setClickEffects(prev => [
       ...prev, 
@@ -257,17 +212,13 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
 
   const handleImageClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (loadingStates[currentIndex]) return;
-
     const rect = e.currentTarget.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
     const id = Date.now() + Math.random();
-    
     const emojis = ['⭐', '❤️', '✨', '🎈', '🎵', '🌸', '🐾'];
     const char = emojis[Math.floor(Math.random() * emojis.length)];
-
     setClickEffects(prev => [...prev, { id, x, y, char }]);
-    
     setTimeout(() => {
       setClickEffects(prev => prev.filter(e => e.id !== id));
     }, 800);
@@ -281,8 +232,10 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
     'conclusion': 'Great Job!' 
   };
 
-  const activeImage = imageCache[currentIndex] || slide.generatedImage || slide.imgUrl;
+  const activeImage = imageCache[currentIndex] || slide?.generatedImage || slide?.imgUrl;
   const isLoading = loadingStates[currentIndex] && !activeImage;
+
+  if (!slide) return null;
 
   return (
     <section className="h-full flex flex-col relative bg-white md:bg-indigo-50/30 slide-enter">
@@ -291,9 +244,7 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
           0% { transform: translateY(0) scale(1); opacity: 1; }
           100% { transform: translateY(-40px) scale(1.5); opacity: 0; }
         }
-        .animate-float-up {
-          animation: floatUp 0.8s ease-out forwards;
-        }
+        .animate-float-up { animation: floatUp 0.8s ease-out forwards; }
         @keyframes fadeIn {
           from { opacity: 0; transform: scale(0.98); }
           to { opacity: 1; transform: scale(1); }
@@ -303,13 +254,9 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
           background-size: 200% 100%;
           animation: shimmer 1.5s infinite;
         }
-        @keyframes shimmer {
-          0% { background-position: 200% 0; }
-          100% { background-position: -200% 0; }
-        }
+        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>
 
-      {/* Progress Bar */}
       <div className="h-3 bg-slate-100 w-full shrink-0">
         <div 
           className="h-full bg-gradient-to-r from-indigo-400 to-purple-400 transition-all duration-500 rounded-r-full" 
@@ -318,7 +265,6 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
       </div>
 
       <div className="flex-1 flex flex-col md:flex-row max-w-6xl mx-auto w-full md:p-6 md:gap-6 h-full overflow-hidden">
-        {/* Left: Visual & Narrative */}
         <div className="flex-1 flex flex-col bg-white md:rounded-3xl md:shadow-xl overflow-hidden relative border border-slate-100 ring-4 ring-indigo-50">
           <div 
             className="h-1/2 md:h-2/3 bg-slate-100 relative group overflow-hidden cursor-pointer active:scale-[0.99] transition-transform"
@@ -340,7 +286,6 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
               />
             )}
             
-            {/* Click Effects Overlay */}
             {clickEffects.map(effect => (
               <div 
                 key={effect.id}
@@ -370,13 +315,22 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
               )}
             </button>
 
-            <button 
-              className="absolute top-4 right-4 bg-white/90 backdrop-blur text-teal-600 p-2 rounded-full shadow-lg hover:bg-teal-50 transition border border-teal-100 z-30 transform hover:scale-105" 
-              onClick={(e) => { e.stopPropagation(); stopSpeech(); setShowPauseModal(true); }} 
-              title="Take a Compassionate Pause"
-            >
-              <span className="material-symbols-outlined text-2xl">self_improvement</span>
-            </button>
+            <div className="absolute top-4 right-4 flex gap-2 z-30">
+              <button 
+                className="bg-white/90 backdrop-blur text-slate-600 p-2 rounded-full shadow-lg hover:bg-slate-50 transition border border-slate-200 transform hover:scale-105" 
+                onClick={(e) => { e.stopPropagation(); setShowSettings(true); }} 
+                title="Voice Settings"
+              >
+                <span className="material-symbols-outlined text-2xl">settings_voice</span>
+              </button>
+              <button 
+                className="bg-white/90 backdrop-blur text-teal-600 p-2 rounded-full shadow-lg hover:bg-teal-50 transition border border-teal-100 transform hover:scale-105" 
+                onClick={(e) => { e.stopPropagation(); stopSpeech(); setShowPauseModal(true); }} 
+                title="Take a Compassionate Pause"
+              >
+                <span className="material-symbols-outlined text-2xl">self_improvement</span>
+              </button>
+            </div>
           </div>
 
           <div className="flex-1 p-6 flex flex-col justify-center items-center bg-indigo-50/30 border-t border-indigo-100 overflow-y-auto">
@@ -394,18 +348,12 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
                   onClick={() => handleChoice(idx, choice.feedback)}
                 >
                   {choice.text}
-                  {selectedChoiceIndex === idx && (
-                    <span className="absolute -top-3 -right-3 bg-indigo-500 text-white rounded-full p-1 shadow-md animate-bounce">
-                      <span className="material-symbols-outlined text-sm">favorite</span>
-                    </span>
-                  )}
                 </button>
               ))}
             </div>
           </div>
         </div>
 
-        {/* Right: Parent Companion */}
         <div className="md:w-80 bg-orange-50 md:rounded-3xl md:shadow-lg border-l-4 border-orange-200 p-6 flex flex-col shrink-0">
           <div className="flex items-center gap-2 mb-4 text-orange-800 font-bold uppercase tracking-wider text-xs">
             <span className="material-symbols-outlined text-sm">face</span>
@@ -420,10 +368,6 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
                 <p className="text-indigo-600 font-medium italic text-lg">"{processedAction}"</p>
               </div>
             )}
-            <div className="mt-4 bg-white/60 p-3 rounded-lg text-sm text-indigo-800 border border-indigo-100 flex gap-2 items-center">
-              <span className="material-symbols-outlined text-xl text-indigo-400">touch_app</span>
-              <span>Tap the picture for magic stars!</span>
-            </div>
           </div>
           <div className="mt-4 pt-4 border-t border-orange-200 flex justify-between items-center">
             <button 
@@ -433,9 +377,7 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
             >
               <span className="material-symbols-outlined">arrow_back</span>
             </button>
-            <div className="text-sm font-bold text-slate-400">
-              {currentIndex + 1} of {story.slides.length}
-            </div>
+            <div className="text-sm font-bold text-slate-400">{currentIndex + 1} of {story.slides.length}</div>
             <button 
               className="bg-indigo-600 hover:bg-indigo-700 text-white p-4 rounded-full shadow-lg transition transform hover:scale-110 active:scale-95" 
               onClick={handleNext}
@@ -448,7 +390,57 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
         </div>
       </div>
 
-      {/* Compassion Pause Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-6 backdrop-blur-sm slide-enter">
+          <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl border-4 border-indigo-100 relative">
+            <button className="absolute top-4 right-4 text-slate-400 hover:text-slate-600" onClick={() => setShowSettings(false)}>
+              <span className="material-symbols-outlined">close</span>
+            </button>
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-indigo-100 rounded-full mx-auto mb-4 flex items-center justify-center">
+                <span className="material-symbols-outlined text-3xl text-indigo-600">tune</span>
+              </div>
+              <h2 className="text-2xl font-bold font-fredoka text-slate-800">Voice Settings</h2>
+            </div>
+            <div className="space-y-6">
+              <div>
+                <div className="flex justify-between mb-2">
+                  <label className="font-bold text-slate-700 text-sm">Voice Pitch (Cuteness)</label>
+                  <span className="text-xs font-mono text-slate-500">{voicePitch.toFixed(1)}</span>
+                </div>
+                <input 
+                  type="range" min="0.5" max="2.0" step="0.1" value={voicePitch}
+                  onChange={(e) => setVoicePitch(parseFloat(e.target.value))}
+                  aria-label="Adjust voice pitch"
+                  aria-valuetext={`${voicePitch.toFixed(1)}`}
+                  className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+              </div>
+              <div>
+                <div className="flex justify-between mb-2">
+                  <label className="font-bold text-slate-700 text-sm">Reading Speed</label>
+                  <span className="text-xs font-mono text-slate-500">{voiceRate.toFixed(1)}x</span>
+                </div>
+                <input 
+                  type="range" min="0.5" max="1.5" step="0.05" value={voiceRate}
+                  onChange={(e) => setVoiceRate(parseFloat(e.target.value))}
+                  aria-label="Adjust reading speed"
+                  aria-valuetext={`${voiceRate.toFixed(1)} times normal speed`}
+                  className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+              </div>
+              <button 
+                className="w-full py-3 rounded-xl bg-indigo-50 text-indigo-700 font-bold border border-indigo-200 hover:bg-indigo-100 transition flex items-center justify-center gap-2"
+                onClick={() => speak("Hello! Do you like my voice?", true)}
+              >
+                <span className="material-symbols-outlined">volume_up</span> Test Voice
+              </button>
+              <button className="w-full py-3 rounded-xl bg-indigo-600 text-white font-bold" onClick={() => setShowSettings(false)}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showPauseModal && (
         <div className="fixed inset-0 bg-teal-900/90 z-50 flex items-center justify-center p-6 backdrop-blur-sm slide-enter">
           <div className="bg-white rounded-3xl p-8 text-center max-w-md w-full shadow-2xl">
@@ -457,21 +449,11 @@ const StoryPlayer: React.FC<StoryPlayerProps> = ({
             </div>
             <h2 className="text-3xl font-bold mb-3 font-fredoka text-slate-800">Breathe With Me</h2>
             <p className="text-lg text-slate-600 mb-8">Let's take a deep breath in...<br/>and let it out slowly.</p>
-            <button 
-              className="bg-teal-500 text-white font-bold py-4 px-10 rounded-full shadow-lg hover:bg-teal-600 transition transform hover:scale-105" 
-              onClick={() => setShowPauseModal(false)}
-            >
-              I'm Ready Now
-            </button>
+            <button className="bg-teal-500 text-white font-bold py-4 px-10 rounded-full shadow-lg" onClick={() => setShowPauseModal(false)}>I'm Ready Now</button>
           </div>
         </div>
       )}
-      
-      {/* Close button for full story view */}
-      <button 
-        className="fixed top-20 right-4 md:right-8 bg-white/80 hover:bg-white p-3 rounded-full text-slate-500 z-40 shadow-sm transition transform hover:rotate-90"
-        onClick={onExit}
-      >
+      <button className="fixed top-20 right-4 md:right-8 bg-white/80 hover:bg-white p-3 rounded-full text-slate-500 z-40 shadow-sm transition transform hover:rotate-90" onClick={onExit}>
         <span className="material-symbols-outlined">close</span>
       </button>
     </section>

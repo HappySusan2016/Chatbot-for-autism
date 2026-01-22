@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
-import { ChildProfile, ViewState } from '../types';
+import React, { useState } from 'react';
+import { ChildProfile } from '../types';
 
 interface PassportProps {
   onSave: (profile: ChildProfile) => void;
@@ -12,34 +12,11 @@ const Passport: React.FC<PassportProps> = ({ onSave, initialProfile }) => {
   const [avatar, setAvatar] = useState<ChildProfile['avatar']>(initialProfile?.avatar || 'bear');
   const [interest, setInterest] = useState(initialProfile?.interest || '');
   const [strategy, setStrategy] = useState(initialProfile?.strategy || 'wear headphones');
-  const [voiceURI, setVoiceURI] = useState(initialProfile?.voiceURI || 'default');
-  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
-
-  useEffect(() => {
-    // Safety check for speech synthesis environment
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      const loadVoices = () => {
-        try {
-          const voices = window.speechSynthesis.getVoices();
-          setAvailableVoices(voices);
-        } catch (e) {
-          console.warn("Could not load speech voices", e);
-        }
-      };
-      
-      loadVoices();
-      window.speechSynthesis.onvoiceschanged = loadVoices;
-      
-      // Cleanup
-      return () => {
-        window.speechSynthesis.onvoiceschanged = null;
-      };
-    }
-  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave({ name, avatar, interest, strategy, voiceURI });
+    // Defaulting voiceURI to 'default' as we removed the selector
+    onSave({ name, avatar, interest, strategy, voiceURI: 'default' });
   };
 
   return (
@@ -110,19 +87,7 @@ const Passport: React.FC<PassportProps> = ({ onSave, initialProfile }) => {
               <option value="ask for a break">Ask for a quiet break</option>
             </select>
           </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-2">Audio Voice Preference</label>
-            <select 
-              className="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none bg-white" 
-              value={voiceURI}
-              onChange={e => setVoiceURI(e.target.value)}
-            >
-              <option value="default">Default System Voice</option>
-              {availableVoices.map(v => (
-                <option key={v.voiceURI} value={v.voiceURI}>{v.name} ({v.lang})</option>
-              ))}
-            </select>
-          </div>
+          
           <div className="pt-4 text-right">
             <button className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-xl shadow-md transition" type="submit">
               Save Profile
